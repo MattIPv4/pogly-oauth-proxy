@@ -2,6 +2,7 @@ import fastify from "fastify";
 import fastifyOauth2 from "@fastify/oauth2";
 import fastifySecureSession from "@fastify/secure-session";
 import { randomUUID } from "node:crypto";
+import { getUser, setUser } from "./database";
 
 // TODO: https://github.com/fastify/fastify-http-proxy
 
@@ -10,6 +11,7 @@ if (!process.env.TWITCH_CLIENT_ID)
 if (!process.env.TWITCH_CLIENT_SECRET)
   throw new Error("TWITCH_CLIENT_SECRET is required");
 if (!process.env.SESSION_SECRET) throw new Error("SESSION_SECRET is required");
+if (!process.env.POGLY_HOST) throw new Error("POGLY_HOST is required");
 
 const server = fastify({
   genReqId: () => randomUUID(),
@@ -51,6 +53,20 @@ server.register(fastifySecureSession, {
 server.addHook("preHandler", async (req) => {
   const user = req.session.get("user");
   if (!user) return;
+
+  // Ensure the user still exists and is using the correct token
+  const dbUser = await getUser(user.id);
+  if (!dbUser?.token) {
+    req.session.regenerate();
+    console.log(
+      `${req.id} user no longer exists ${user.id} (${user.username})`,
+    );
+    return;
+  }
+  if (user.pogly !== dbUser.token) {
+    req.session.set("user", { ...user, pogly: dbUser.token });
+    console.log(`${req.id} updated token for ${user.id} (${user.username})`);
+  }
 
   const tokenData = req.session.get("token");
   const token = tokenData && server.twitchOauth2.oauth2.createToken(tokenData);
@@ -112,19 +128,36 @@ server.get("/login/twitch/callback", async (req, reply) => {
       await server.twitchOauth2.getAccessTokenFromAuthorizationCodeFlow(req);
     const user = await server.twitchOauth2.userinfo(token.token);
 
-    // TODO: Ensure user is in database
+    const dbUser = await getUser(user.sub);
+    if (!dbUser) {
+      console.log(
+        `${req.id} unknown user ${user.sub} (${user.preferred_username})`,
+      );
+      return reply.status(401).send(new Error("Unauthorized"));
+    }
+    if (!dbUser.token) {
+      const resp = await fetch(
+        `${process.env.POGLY_HOST}/database/subscribe/${Date.now()}`,
+      );
+      dbUser.token = resp.headers.get("Spacetime-Identity-Token") ?? "";
+      if (!dbUser.token)
+        throw new Error(
+          `Failed to get token from Pogly - ${resp.status} ${resp.statusText} ${await resp.text().catch(() => "")}`,
+        );
+    }
+    dbUser.username = user.preferred_username;
+    await setUser(user.sub, dbUser);
 
     req.session.set("user", {
       id: user.sub,
       username: user.preferred_username,
       validated: Date.now(),
+      pogly: dbUser.token,
     });
     req.session.set("token", {
       ...token.token,
       expires_at: token.token.expires_at.toISOString(),
     });
-
-    // TODO: If new user, get token from Pogly and store in database
 
     console.log(
       `${req.id} authenticated as ${user.sub} (${user.preferred_username})`,
@@ -144,7 +177,7 @@ server.get("/login/twitch", async (req, reply) => {
 });
 
 // TODO: Proxy requests to pogly
-// TODO: Inject Pogly token + modules + nickname into response
+// TODO: Inject stdbToken + poglyQuickSwap (domain/nickname/module) + stdbConnectDomain + stdbConnectModule
 // TODO: Allow overlay route to bypass auth
 
 server.get("/", async (req, reply) => {

@@ -26,6 +26,7 @@ interface User {
   id: string;
   username: string;
   validated: number;
+  pogly: string;
 }
 
 type JSONToken = {
