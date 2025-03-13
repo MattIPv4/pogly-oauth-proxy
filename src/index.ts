@@ -3,15 +3,21 @@ import fastifyOauth2 from "@fastify/oauth2";
 import fastifySecureSession from "@fastify/secure-session";
 import { randomUUID } from "node:crypto";
 import { getUser, setUser } from "./database";
+import proxy from "./proxy";
 
 // TODO: https://github.com/fastify/fastify-http-proxy
 
-if (!process.env.TWITCH_CLIENT_ID)
-  throw new Error("TWITCH_CLIENT_ID is required");
-if (!process.env.TWITCH_CLIENT_SECRET)
-  throw new Error("TWITCH_CLIENT_SECRET is required");
-if (!process.env.SESSION_SECRET) throw new Error("SESSION_SECRET is required");
-if (!process.env.POGLY_HOST) throw new Error("POGLY_HOST is required");
+const {
+  TWITCH_CLIENT_ID,
+  TWITCH_CLIENT_SECRET,
+  SESSION_SECRET,
+  POGLY_HOST,
+  POGLY_MODULES,
+} = process.env;
+if (!TWITCH_CLIENT_ID) throw new Error("TWITCH_CLIENT_ID is required");
+if (!TWITCH_CLIENT_SECRET) throw new Error("TWITCH_CLIENT_SECRET is required");
+if (!SESSION_SECRET) throw new Error("SESSION_SECRET is required");
+if (!POGLY_HOST) throw new Error("POGLY_HOST is required");
 
 const server = fastify({
   genReqId: () => randomUUID(),
@@ -22,8 +28,8 @@ server.addHook("preHandler", async (req) => {
 });
 
 const tokenRequestParams = {
-  client_id: process.env.TWITCH_CLIENT_ID,
-  client_secret: process.env.TWITCH_CLIENT_SECRET,
+  client_id: TWITCH_CLIENT_ID,
+  client_secret: TWITCH_CLIENT_SECRET,
 };
 
 server.register(fastifyOauth2, {
@@ -31,8 +37,8 @@ server.register(fastifyOauth2, {
   scope: ["openid"],
   credentials: {
     client: {
-      id: process.env.TWITCH_CLIENT_ID,
-      secret: process.env.TWITCH_CLIENT_SECRET,
+      id: TWITCH_CLIENT_ID,
+      secret: TWITCH_CLIENT_SECRET,
     },
   },
   tokenRequestParams,
@@ -43,7 +49,7 @@ server.register(fastifyOauth2, {
 });
 
 server.register(fastifySecureSession, {
-  key: Buffer.from(process.env.SESSION_SECRET, "hex"),
+  key: Buffer.from(SESSION_SECRET, "hex"),
   cookie: {
     path: "/",
     httpOnly: true,
@@ -137,7 +143,7 @@ server.get("/login/twitch/callback", async (req, reply) => {
     }
     if (!dbUser.token) {
       const resp = await fetch(
-        `${process.env.POGLY_HOST}/database/subscribe/${Date.now()}`,
+        `${POGLY_HOST}/database/subscribe/${Date.now()}`,
       );
       dbUser.token = resp.headers.get("Spacetime-Identity-Token") ?? "";
       if (!dbUser.token)
@@ -176,15 +182,9 @@ server.get("/login/twitch", async (req, reply) => {
   return reply.redirect(uri);
 });
 
-// TODO: Proxy requests to pogly
-// TODO: Inject stdbToken + poglyQuickSwap (domain/nickname/module) + stdbConnectDomain + stdbConnectModule
-// TODO: Allow overlay route to bypass auth
-
-server.get("/", async (req, reply) => {
-  const user = req.session.get("user");
-  if (!user) return reply.send("Not authenticated");
-
-  return reply.send(`Authenticated as ${user.id} (${user.username})`);
+await server.register(proxy, {
+  host: POGLY_HOST,
+  modules: POGLY_MODULES?.split(" "),
 });
 
 server.listen({ port: 3000 }).then((res) => {
