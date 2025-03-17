@@ -18,6 +18,10 @@ interface TwitchOAuth2 extends OAuth2Namespace {
 }
 
 declare module "fastify" {
+  interface FastifyRequest {
+    secure: () => boolean;
+  }
+
   interface FastifyInstance {
     twitchOauth2: TwitchOAuth2;
     proxy: httpProxy;

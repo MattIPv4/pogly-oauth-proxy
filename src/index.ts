@@ -1,9 +1,9 @@
-import fastify from "fastify";
+import fastify, { type FastifyRequest } from "fastify";
 import fastifyOauth2 from "@fastify/oauth2";
 import fastifySecureSession from "@fastify/secure-session";
 import { randomUUID } from "node:crypto";
 import { getUser, setUser } from "./database";
-import proxy, { withSecure } from "./proxy";
+import proxy from "./proxy";
 
 const {
   TWITCH_CLIENT_ID,
@@ -19,6 +19,10 @@ if (!POGLY_HOST) throw new Error("POGLY_HOST is required");
 
 const server = fastify({
   genReqId: () => randomUUID(),
+});
+
+server.decorateRequest("secure", function (this: FastifyRequest) {
+  return this.protocol === "https" || process.env.FORCE_SECURE === "true";
 });
 
 server.addHook("preHandler", async (req, reply) => {
@@ -44,7 +48,7 @@ server.register(fastifyOauth2, {
     issuer: "https://id.twitch.tv/oauth2",
   },
   callbackUri: (req) =>
-    `${withSecure(req, "http")}://${req.host}/login/twitch/callback`,
+    `${req.secure() ? "https" : "http"}://${req.host}/login/twitch/callback`,
 });
 
 server.register(fastifySecureSession, {
@@ -188,10 +192,7 @@ await server.register(proxy, {
     .map((module) => module.trim()),
 });
 
-const port = Number.isNaN(Number(process.env.PORT))
-  ? 3000
-  : Number(process.env.PORT);
-
+const port = Number(process.env.PORT) || 3000;
 server.listen({ port, host: process.env.HOST }).then((res) => {
   console.log(`Server running on ${res.replace("[::1]", "localhost")}`);
 });

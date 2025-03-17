@@ -24,12 +24,6 @@ const web = async (
   return reply;
 };
 
-export const withSecure = (req: FastifyRequest, prefix: string) => {
-  const isSecure =
-    req.protocol === "https" || process.env.FORCE_SECURE === "true";
-  return isSecure ? `${prefix}s` : prefix;
-};
-
 const ws = async (req: FastifyRequest, reply: FastifyReply) => {
   reply.hijack();
   req.server.proxy.ws(req.raw, req.socket, null, {}, (err) => {
@@ -108,7 +102,7 @@ const proxy = async (server: FastifyInstance, opts: Options) => {
       if (
         !modules.includes(url.searchParams.get("module") ?? "") ||
         url.searchParams.get("domain") !==
-          `${withSecure(req, "ws")}://${req.host}`
+          `${req.secure() ? "wss" : "ws"}://${req.host}`
       ) {
         console.error(`${signature(req)} invalid module`);
         return reply.status(400).send(new Error("Invalid module"));
@@ -151,7 +145,7 @@ const proxy = async (server: FastifyInstance, opts: Options) => {
         // Inject the user's details and modules into the root HTML response
         if (req.method === "GET" && /^\/($|\?)/.test(req.url)) {
           const html = new TextDecoder().decode(body);
-          const domain = `${withSecure(req, "ws")}://${req.host}`;
+          const domain = `${req.secure() ? "wss" : "ws"}://${req.host}`;
           const swap = modules.map((module) => ({ domain, module }));
           return Buffer.from(
             new TextEncoder().encode(
