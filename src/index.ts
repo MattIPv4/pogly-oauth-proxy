@@ -3,7 +3,7 @@ import fastifyOauth2 from "@fastify/oauth2";
 import fastifySecureSession from "@fastify/secure-session";
 import { randomUUID } from "node:crypto";
 import { getUser, setUser } from "./database";
-import proxy from "./proxy";
+import proxy, { withSecure } from "./proxy";
 
 const {
   TWITCH_CLIENT_ID,
@@ -43,7 +43,8 @@ server.register(fastifyOauth2, {
   discovery: {
     issuer: "https://id.twitch.tv/oauth2",
   },
-  callbackUri: (req) => `${req.protocol}://${req.host}/login/twitch/callback`,
+  callbackUri: (req) =>
+    `${withSecure(req, "http")}://${req.host}/login/twitch/callback`,
 });
 
 server.register(fastifySecureSession, {
@@ -187,6 +188,10 @@ await server.register(proxy, {
     .map((module) => module.trim()),
 });
 
-server.listen({ port: 3000 }).then((res) => {
+const port = Number.isNaN(Number(process.env.PORT))
+  ? 3000
+  : Number(process.env.PORT);
+
+server.listen({ port, host: process.env.HOST }).then((res) => {
   console.log(`Server running on ${res.replace("[::1]", "localhost")}`);
 });
